@@ -1,0 +1,25 @@
+(function (window, Drupal, $) {
+
+  // This is to fix ET-4308: iOS browser shows AJAX "parsererror" when you
+  // submit the form when there's an ajax ongoing (e.g. zip code > load target).
+
+  // Do not alllow submit during AJAX.
+  // Listen to global ajaxSend / ajaxStop events.
+  // Note that we use ajaxSend event instead of ajaxStart event as we need to
+  // get the ajax object, so we only disable submit button when the ajax is
+  // indeed related to the form elements (instead of unrelated ones such as
+  // activity stream).
+  $( document ).ajaxSend(function( event, jqxhr, settings ) {
+    // URLs are like:
+    // /webform_elected/ajax/force_theme/12345 (load target).
+    // /webform_elected/ajax (for postal code).
+    if ( settings.url.match(/\/webform_elected\/ajax/g) ) {
+      $('input.webform-submit').prop('disabled', true);
+    }
+
+  }).ajaxStop(function() {
+    $('input.webform-submit').prop('disabled', false);
+  });
+
+}(window, Drupal, jQuery));
+;

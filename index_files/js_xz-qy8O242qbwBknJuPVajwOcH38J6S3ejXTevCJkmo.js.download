@@ -1,0 +1,142 @@
+(function (window, document, pym, $, Drupal, settings) {
+  settings = settings || {};
+
+  // Override parent listeners (fix for squarespace).
+  document.addEventListener('touchstart', {});
+
+  var getBodyHeight = function () {
+    // same as pym library.
+    return document.getElementsByTagName('body')[0].offsetHeight.toString();
+  };
+
+  var getHtmlHeight = function () {
+    var htmlElement = document.getElementsByTagName('html').item(0);
+    if (htmlElement && htmlElement.offsetHeight) {
+      return htmlElement.offsetHeight.toString();
+    }
+    else {
+      return 0;
+    }
+  };
+
+  var getHeight = function () {
+    return Math.max(getBodyHeight(), getHtmlHeight());
+  };
+
+  var lastHeight = getHeight();
+  var pymChild = new pym.Child({id:settings.childId});
+
+  // Set redirect timer from variable.
+  var redirectTimer = settings.redirectTimer;
+
+  if (settings.navigateParentTo) {
+    // Trigger the redirect a few seconds AFTER document.ready() event.
+    // Note that GoogleAnalyticsPageView trigger doesn't wait for page fully
+    // load, and will send it as soon as possible, so "ready + 2s" should be
+    // more than enough time for GA to trigger.
+
+    $(document).ready(function() {
+      setTimeout(function(){
+        pymChild.navigateParentTo(settings.navigateParentTo);
+        // Wait another second and then redirect child in case we can't
+        // redirect the parent.
+        setTimeout(function(){
+          window.location.replace(settings.navigateParentTo);
+        },
+        1000);
+      },
+      redirectTimer);
+    });
+  }
+
+  // Monkey-patch the pym library to use our measurements of iframe height (i.e. of the html element instead of just the body element).
+  pymChild.sendHeight = function() {
+      // Send the height to the parent.
+      this.sendMessage('height', getHeight());
+  }.bind(pymChild);
+
+  // Send height again right away, this time with our measurements.
+  pymChild.sendHeight();
+  // Send child-init event to parent asap, so parent can record the initial
+  // Y offset.
+  pymChild.sendMessage('child-init');
+
+  var parent_inital_offset = 0;
+  pymChild.onMessage('parent-initial-offset', function(value) {
+    parent_inital_offset = value;
+  });
+
+  // If we receive a parent-geo-coords message from the iframe
+  // parent then trigger an event for the addresfield to react
+  // to and pass along coordinate string.
+  pymChild.onMessage('parent-geo-coords', function(latLong) {
+    $('head').first().trigger('nmAddressProcessLatLong', [latLong]);
+  });
+
+  var interval = settings.initialInterval || 100;
+  var timeoutID = null;
+  var scrollTimeoutID = null;
+
+  var getNextInterval = function () {
+    var lastInterval = interval;
+    interval = Math.min(settings.maxInterval || 1000, interval * (settings.intervalSlowingFactor || 1.25));
+    return lastInterval;
+  };
+
+  var checkHeight = function () {
+    var newHeight = getHeight();
+    if (newHeight != lastHeight) {
+      lastHeight = newHeight;
+      pymChild.sendHeight();
+    }
+    timeoutID = window.setTimeout(checkHeight, getNextInterval());
+  };
+
+  var scrollParent = function () {
+    if(window.location.href.toString().includes("SPageNavigator")||window.location.href.toString().includes("SPageServer")){
+      return;
+    }
+    // Our webforms always have a pager element.
+    else if ($('input[name*=page_num]') && ('1' != $('input[name*=page_num]').val())) {
+      // If current page is not the first page, jump to keep focus on the iframe.
+      pymChild.scrollParentTo(settings.childId);
+    }
+    else {
+      // If it is the first page, keep parent at top (or back to whaterver
+      // viewport was at).
+      // ET-3217: Do not scroll / jump.
+      pymChild.sendMessage('scrollParentBack', parent_inital_offset);
+    }
+  };
+
+  timeoutID = window.setTimeout(checkHeight, getNextInterval());
+  scrollTimeoutID = window.setTimeout(scrollParent, getNextInterval());
+
+  // ET-3217.
+  $( document ).ajaxComplete(function() {
+    // After ajax complete in children iframe, for example:
+    // prefilled postal code > loading reps.
+    // It looks like jQuery / jQuery form plugin always focus on the newly
+    // loaded ajax content.
+    // However, ET-3217 says we don't want jump to iframe.
+    // So, after AJAX complete in child iframe, we force parent go back to top.
+    scrollParent();
+  });
+
+  var fireParentUrlEvent = function (parentUrl) {
+    $('head').first().trigger('nmEmbedParentUrl', {parentUrl: parentUrl});
+  };
+
+  if ('parentUrl' in settings) {
+    fireParentUrlEvent(settings.parentUrl);
+  }
+  else {
+    pymChild.onMessage('parentUrl', function (parentUrl) {
+      settings.parentUrl = parentUrl;
+      fireParentUrlEvent(settings.parentUrl);
+    });
+    pymChild.sendMessage('getParentUrl', '');
+  }
+
+})(window, document, pym, jQuery, Drupal, Drupal.settings.embeddedAsIframe);
+;

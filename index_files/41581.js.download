@@ -1,0 +1,165 @@
+(function (settings) {
+
+  var pymParent;
+
+  // Coordinates coming from browser-based geolocation.
+  var geoLocation;
+
+  var appendQuery = function appendQuery(url, query) {
+    if (0 === query.length) {
+      return url;
+    }
+    if ('?' == query.charAt(0)) {
+      query = query.substring(1);
+    }
+    var separator = (-1 !== url.indexOf('?')) ? '&' : '?';
+    return url + separator + query;
+  };
+
+  var shouldLoadThankYouPage = function() {
+    var queryParams = window.location.search.substr(1).split('&').reduce(function (q, query) {
+      var chunks = query.split('=');
+      var key = chunks[0];
+      var value = chunks[1];
+      return (q[key] = value, q);
+    }, {});
+    return queryParams['nm-embed-show-thank-you'] === '1';
+  };
+
+  var geoLocationSuccess = function (position) {
+    // Store geolocation for retrieval by the listener.
+    geoLocation = position;
+    // Trigger an event for the listener to react to if
+    // we manage to load coordinates.
+    const event = new Event('parent-geo');
+    window.dispatchEvent(event);
+  }
+
+  var geoLocationError = function () {
+    geoLocation = null;
+  }
+
+  var geoLocationCheck = function () {
+    // Attempt to get coordinates.
+    navigator.geolocation.getCurrentPosition(geoLocationSuccess, geoLocationError);
+    // Add listiner to send message to child if we get a result.
+    window.addEventListener("parent-geo", function(e, latLong) {
+      latLong = geoLocation.coords.latitude + ':' + geoLocation.coords.longitude;
+      pymParent.sendMessage('parent-geo-coords', latLong);
+    });
+  }
+
+  var firstScriptElement = document.getElementsByTagName('script')[0];
+
+  if (settings.share_progress_js_url) {
+    var scriptElementSP = document.createElement('script');
+    scriptElementSP.async = 1;
+    scriptElementSP.src = settings.share_progress_js_url;
+    firstScriptElement.parentNode.insertBefore(scriptElementSP,firstScriptElement);
+  }
+
+  if (settings.nm_analytics_js_url) {
+    var scriptElementNMA = document.createElement('script');
+    scriptElementNMA.async = 1;
+    scriptElementNMA.src = settings.nm_analytics_js_url;
+    firstScriptElement.parentNode.insertBefore(scriptElementNMA,firstScriptElement);
+  }
+
+  if (settings.pym_lib_url) {
+    var scriptElement = document.createElement('script');
+    scriptElement.async = 1;
+    scriptElement.src = settings.pym_lib_url;
+    scriptElement.type = "application/javascript";
+    firstScriptElement.parentNode.insertBefore(scriptElement,firstScriptElement);
+    scriptElement.onload = function () {
+      if (settings.div_id && settings.iframe_url) {
+        var url = appendQuery(settings.iframe_url, document.location.search);
+
+        if (shouldLoadThankYouPage() && settings.thank_you_url) {
+          url = appendQuery(settings.thank_you_url, document.location.search);
+        }
+
+        // Add random iframe ID to subvert safari iframe caching.
+        var iframeId = 'nm-' + Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 5) +
+    Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 5);
+        // Create config object to hold id.
+        var pymConfig = {
+          id: iframeId,
+        };
+        // Create pym parent.
+        pymParent = new pym.Parent(settings.div_id, url, pymConfig);
+
+        pymParent.onMessage('child-init', function() {
+          // Tell child iframe the parent window position as soon as child is
+          // ready.
+          var partent_offset = window.pageYOffset;
+          pymParent.sendMessage('parent-initial-offset', partent_offset);
+          // If parent window has scrolled after that, update the offset.
+          window.addEventListener("scroll", function() {
+            var partent_offset = window.pageYOffset;
+            pymParent.sendMessage('parent-initial-offset', partent_offset);
+          });
+        });
+
+        // Allow child to learn about parent URL, for cases where iframe content has navigated away from original URL with parentUrl parameter.
+        pymParent.onMessage('getParentUrl', function() {
+          this.sendMessage('parentUrl', encodeURIComponent(window.location.href));
+        });
+
+        // pym.js sets the iframe height via the HTML "height" attribute, which
+        // can get overridden by (unrelated) CSS rules. So, in addition, we also
+        // set the CSS "height" property directly on the iframe, which in turn
+        // overrides any CSS applied via rules.
+        pymParent.onMessage('height', function(message) {
+          var height = parseInt(message);
+          if ('style' in this.iframe) {
+            if ('height' in this.iframe.style) {
+              this.iframe.style.height = height + 'px';
+            }
+          }
+        });
+
+        // Custom message: scrollParentToTop.
+        // This is to allow children iframe setup parent position.
+        pymParent.onMessage('scrollParentBack', function(pageYOffset) {
+          window.scrollTo(0, pageYOffset);
+        });
+
+        // If we have an addressfield as a key component then try
+        // to get address via browser location detection.
+        if (settings.address_key) {
+          // Don't do this for ff.
+
+          // Disable this universally for now.
+          // isFirefox = navigator.userAgent.indexOf("Firefox") != -1;
+          // if (!isFirefox) {
+          //   if (navigator.geolocation) {
+          //     // Wait 2 few seconds before attempting as page needs
+          //     // to load.
+          //     timeoutID = window.setTimeout(geoLocationCheck, 2000);
+          //   }
+          // }
+        }
+      }
+    };
+  }
+
+  if (settings.font_url) {
+    var head = document.head || document.getElementsByTagName('head')[0],
+        link = document.createElement('link');
+    link.setAttribute('rel', 'stylesheet');
+    link.setAttribute('type', 'text/css');
+    link.setAttribute('href', settings.font_url);
+    head.appendChild(link);
+  }
+
+  // Do not append anything after the closing parenthesis!
+})({
+    "pym_lib_url": "https://blog.apps.npr.org/pym.js/dist/pym.v1.min.js",
+    "share_progress_js_url": "",
+    "div_id": "newmode-embed-26405-41581",
+    "iframe_url": "//engage.newmode.net/nm-letter/26405/41581",
+    "font_url": "",
+    "thank_you_url": "https://engage.newmode.net/node/41581/done",
+    "address_key": false
+});
